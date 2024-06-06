@@ -16,6 +16,7 @@ int main(int argc, char** argv){
     char* N = NULL;
     char* jobID = NULL;
     char* pollState = NULL;
+    int mode = 0;
 
 
     if (argc < 4){
