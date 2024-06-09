@@ -14,6 +14,8 @@
 struct job {
     char* job;
     char* jobID;
+    int socket;
+
 };
 
 struct CommanderBuffer {
@@ -24,6 +26,17 @@ struct CommanderBuffer {
     pthread_mutex_t bufferMutex;
     pthread_cond_t bufferCond;
 };
+
+int freeBuffer(struct CommanderBuffer* p) {
+    for (int i = 0; i < p->bufferSize; i++) {
+        if (p->jobBuffer[i].job != NULL) {
+            free(p->jobBuffer[i].job);
+            free(p->jobBuffer[i].jobID);
+        }
+    }
+    free(p->jobBuffer);
+    return 0;
+}
 
 int addJob(char* job, struct CommanderBuffer* p) {
     struct job* newJob = malloc(sizeof(struct job));
@@ -66,15 +79,15 @@ int removeJob(struct job* jobBuffer, struct job* newJob, int bufferSize) {
 void* workerThread(void* arg) {
     struct CommanderBuffer* p = (struct CommanderBuffer*)arg;
     while (1) {
-        struct job currentJob;
-        pthread_mutex_lock(&p->bufferMutex);
+        struct job* currentJob;
         while (p->currentJobs == 0) {
             pthread_cond_wait(&p->bufferCond, &p->bufferMutex);
         }   
+        pthread_mutex_lock(&p->bufferMutex);
         if (p->currentJobs > 0) {
             for (int i = 0; i < p->bufferSize; i++) {
                 if (p->jobBuffer[i].job != NULL) {
-                    currentJob = p->jobBuffer[i];
+                    currentJob = &p->jobBuffer[i];
                     p->jobBuffer[i].job = NULL;
                     p->currentJobs--;
                     pthread_mutex_unlock(&p->bufferMutex);
@@ -82,7 +95,7 @@ void* workerThread(void* arg) {
                 }
             }
         }
-        printf("Worker thread processing job ID: %s\n", currentJob.jobID);
+        printf("Worker thread processing job ID: %s\n", currentJob->jobID);
 
         pid_t pid = fork();
         if (pid == -1) {
@@ -91,7 +104,7 @@ void* workerThread(void* arg) {
         } else if (pid == 0) {
             char* argv[32];
             int argc = 0;
-            char* token = strtok(currentJob.job, " ");
+            char* token = strtok(currentJob->job, " ");
             while (token != NULL) {
                 argv[argc++] = token;
                 token = strtok(NULL, " ");
@@ -102,8 +115,11 @@ void* workerThread(void* arg) {
             exit(1);
         }
         // Process the job
-        free(currentJob.job);  // Free the job string after processing
-        free(currentJob.jobID);  // Free the jobID string
+        free(currentJob->job);  // Free the job string after processing
+        free(currentJob->jobID);  // Free the jobID string
+        close(currentJob->socket);  // Close the socket
+        free(currentJob);  // Free the job structure
+        
     }
     return NULL;
 }
@@ -140,8 +156,10 @@ void* controllerThread(void* arg) {
         } else if (strncmp(buf, "exit", 4) == 0) {
             pthread_mutex_lock(&CB->bufferMutex);
             while(CB->currentJobs > 0) {
-
+                pthread_cond_wait(&CB->bufferCond, &CB->bufferMutex);
             }
+            pthread_mutex_unlock(&CB->bufferMutex);
+            freeBuffer(CB);
             exit(0);
         }
     }
@@ -217,6 +235,7 @@ int main(int argc, char** argv) {
         *((struct CommanderBuffer**)(arg + sizeof(int))) = Commanderbuffer;
         pthread_create(&controller, NULL, controllerThread, arg);
         pthread_detach(controller);  // Detach controller thread
+        free(arg);  // Free the allocated argument memory
     }
 
     close(sock);  // Close the main socket when done
