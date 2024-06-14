@@ -25,7 +25,7 @@ int main(int argc, char** argv){
     }
 
     if (strcmp(argv[3], "issueJob") == 0) {                 
-        if (argc < 3) {                                     
+        if (argc < 5) {                                     
             printf("Usage: issueJob <job>\n");
             return 1;
         }
@@ -39,21 +39,21 @@ int main(int argc, char** argv){
         mode = 1;
         job = strdup(jobCommand);
     } else if (strcmp(argv[3], "setConcurrency") == 0) {
-        if (argc < 3) {
+        if (argc < 5) {
             printf("Usage: setConcurrency <N>\n");
             return 1;
         }
         mode = 2;
         N = argv[4];
     } else if (strcmp(argv[3], "stop") == 0) {
-        if (argc < 3) {
+        if (argc < 5) {
             printf("Usage: stop <jobID>\n");
             return 1;
         }
         mode = 3;
-        jobID = argv[3];
+        jobID = argv[4];
     } else if (strcmp(argv[3], "poll") == 0) {
-        if ((argc < 3) || ((strcmp(argv[4],"running") != 0) && (strcmp(argv[4],"queued")!=0)))  {
+        if ((argc < 5) || ((strcmp(argv[4],"running") != 0) && (strcmp(argv[4],"queued")!=0)))  {
             printf("Usage: %s poll [running|queued]\n", argv[0]);
             return 1;
         } 
@@ -135,13 +135,23 @@ int main(int argc, char** argv){
             break;
     }
 
+    char response[BUFSIZE];
+    int n = read(sockfd, response, BUFSIZE);
+    if (n < 0) {
+        perror("read");
+        return 1;
+    }
 
+    response[n] = '\0';
+    printf("Server response: %s", response);
 
+    close(sockfd);
 
+    // Free allocated memory
+    if (job != NULL) {
+        free(job);
+    }
     
-
-
-
 
     return 0;
 }
