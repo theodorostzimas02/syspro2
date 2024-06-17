@@ -259,7 +259,7 @@ void* controllerThread(void* arg) {
 
         
     }
-    close(newsock);  // Close the socket when done
+    // close(newsock);  // Close the socket when done
     return NULL;
 }
 
@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
         
     }
 
-    close(sock);  // Close the main socket when done
+    shutdown(sock, SHUT_RDWR);  // Shutdown the socket
     free(Commanderbuffer->jobBuffer);  // Free the job buffer
     free(Commanderbuffer);  // Free the CommanderBuffer structure
     return 0;
