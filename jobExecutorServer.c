@@ -74,7 +74,7 @@ int stopJob(char* jobID) {
     if (job->job == NULL) {
         return -1;
     }
-    kill(job->socket, SIGKILL);
+    close(job->socket);
     removeJob(CB->jobBuffer, job, CB->bufferSize);
     printf("Job stopped for gooooood\n");
     return 0;
@@ -160,13 +160,16 @@ void* workerThread(void* arg) {
                 break;
             }
         }
-
+        
         pthread_mutex_unlock(&p->bufferMutex); // Unlock mutex after accessing shared data
 
         if (currentJob != NULL) {
             printf("Worker thread processing job ID: %s\n", currentJob->jobID);
             printf("Worker thread processing job: %s\n", currentJob->job);
             char* job_command = strdup(currentJob->job);
+            pthread_mutex_lock(&p->bufferMutex);
+            removeJob(p->jobBuffer, currentJob, p->bufferSize);
+            pthread_mutex_unlock(&p->bufferMutex);
 
             pid_t pid = fork();
             if (pid == -1) {
@@ -191,7 +194,6 @@ void* workerThread(void* arg) {
                 waitpid(pid, &status, 0);
                 printf("Job done i guess\n");
                 pthread_mutex_lock(&p->bufferMutex);
-                removeJob(p->jobBuffer, currentJob, p->bufferSize);
                 activeWorkers--;
                 pthread_mutex_unlock(&p->bufferMutex);
 
