@@ -99,7 +99,6 @@ int stopJob(char* jobID) {
     }
     write(job->socket, "Job terminated\n", 15);
     write(job->socket, "END", 3);
-    close(job->socket);
     removeJob(CB->jobBuffer, job, CB->bufferSize);
     pthread_mutex_lock(&CB->bufferMutex);
     CB->currentJobs--;
@@ -159,7 +158,7 @@ void pollState(int socket) {
 
     if (CB->currentJobs == 0) {
         write(socket, "No jobs in queue\n", 17);
-        pthread_mutex_unlock(&CB->bufferMutex);
+        pthread_mutex_unlock(&CB->bufferMutex)
         return;
     }
 
@@ -324,7 +323,8 @@ void* workerThread(void* arg) {
                 }
                 sprintf(buffer, "-----%s output end-----\n", jobID);
                 write(socket, buffer, strlen(buffer));
-                
+                shutdown(socket, SHUT_RDWR);
+
                 close(fd);
                 remove(outputFD);
 
@@ -372,12 +372,16 @@ void* controllerThread(void* arg) {
             int conc = atoi(N);
             if (conc > threadPoolSize) {
                 write(newsock, "Invalid concurrency level\n", 27);
-                continue;
+                shutdown(newsock, SHUT_RDWR);
+                close(newsock);
+                return NULL;
             }
             setConcurrencyLevel(atoi(N));
             char buf[BUFSIZ];
             sprintf(buf, "CONCURRENCY SET AT %s\n", N);
             write(newsock, buf, strlen(buf));
+            shutdown(newsock, SHUT_RDWR);
+            close(newsock);
         } else if (strncmp(buf, "stop", 4) == 0) {
             char* jobID = buf + 5;
             printf("Job ID: %s\n", jobID);
@@ -386,8 +390,12 @@ void* controllerThread(void* arg) {
             } else {
                 write(newsock, "Job not found\n", 14);
             }
+            shutdown(newsock, SHUT_RDWR);
+            close(newsock);
         } else if (strncmp(buf, "poll", 4) == 0) {
             pollState(newsock);
+            shutdown(newsock, SHUT_RDWR);
+            close(newsock);
         } else if (strncmp(buf, "exit", 4) == 0) {
             pthread_mutex_lock(&CB->bufferMutex);
             while(CB->currentJobs > 0) {
