@@ -10,10 +10,12 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #define BUFSIZE 1024
 
 int concurrency = 1;
+int threadPoolSize = 1;
 int activeWorkers = 0;
 
 struct job {
@@ -36,10 +38,31 @@ struct CommanderBuffer* CB = NULL;
 
 
 
+
+
+
+int printBuffer(struct job* jobBuffer, int bufferSize) {
+    for (int i = 0; i < bufferSize; i++) {
+        printf("Job %d: %s with jobID %s \n", i, jobBuffer[i].job, jobBuffer[i].jobID);
+    }
+    return 0;
+}
+
+
 int removeJob(struct job* jobBuffer, struct job* newJob, int bufferSize) {
     for (int i = 0; i < bufferSize; i++) {
         if (jobBuffer[i].job == newJob->job) {
+
+            free(jobBuffer[i].job);
+            free(jobBuffer[i].jobID);
+
             jobBuffer[i].job = NULL;
+            for (int j = i; j < bufferSize - 1; j++) {
+                jobBuffer[j] = jobBuffer[j + 1];
+            }
+            jobBuffer[bufferSize - 1].job = NULL;
+            jobBuffer[bufferSize - 1].jobID = NULL;
+            
             return 0;
         }
     }
@@ -74,8 +97,13 @@ int stopJob(char* jobID) {
     if (job->job == NULL) {
         return -1;
     }
+    write(job->socket, "Job terminated\n", 15);
+    write(job->socket, "END", 3);
     close(job->socket);
     removeJob(CB->jobBuffer, job, CB->bufferSize);
+    pthread_mutex_lock(&CB->bufferMutex);
+    CB->currentJobs--;
+    pthread_mutex_unlock(&CB->bufferMutex);
     printf("Job stopped for gooooood\n");
     return 0;
 }
@@ -90,6 +118,57 @@ void setConcurrencyLevel(int N) {
     pthread_mutex_unlock(&CB->bufferMutex);
 }
 
+// void pollState(int socket) {
+//     int atLeastOneJob = 0;
+//     pthread_mutex_lock(&CB->bufferMutex);
+//     char response[4096]; 
+//     memset(response, 0, sizeof(response)); // Initialize response buffer
+
+//     for (int i = 0; i < CB->bufferSize; i++) {
+//         char doublet[BUFSIZE];
+//         if (CB->jobBuffer[i].job != NULL && CB->jobBuffer[i].socket == socket) {
+//             atLeastOneJob++;
+//             sprintf(doublet, "<%s,%s>\n", CB->jobBuffer[i].jobID, CB->jobBuffer[i].job);
+//             strcat(response, doublet);
+//         }
+//     }
+
+//     if (atLeastOneJob == 0 || CB->currentJobs == 0) {
+//         write(socket, "No jobs in queue\n", 17);
+//         pthread_mutex_unlock(&CB->bufferMutex);
+//         return;
+//     }
+
+//     write(socket, response, strlen(response));
+//     write(socket, "END", 3);
+//     pthread_mutex_unlock(&CB->bufferMutex);
+// }
+
+void pollState(int socket) {
+    pthread_mutex_lock(&CB->bufferMutex);
+    char response[4096]; 
+    memset(response, 0, sizeof(response)); // Initialize response buffer
+
+    for (int i = 0; i < CB->bufferSize; i++) {
+        char doublet[BUFSIZE];
+        if (CB->jobBuffer[i].job != NULL) {
+            sprintf(doublet, "<%s,%s>\n", CB->jobBuffer[i].jobID, CB->jobBuffer[i].job);
+            strcat(response, doublet);
+        }
+    }
+
+    if (CB->currentJobs == 0) {
+        write(socket, "No jobs in queue\n", 17);
+        pthread_mutex_unlock(&CB->bufferMutex);
+        return;
+    }
+
+    write(socket, response, strlen(response));
+    write(socket, "END", 3);
+    pthread_mutex_unlock(&CB->bufferMutex);
+}
+
+
 
 int freeBuffer() {
     for (int i = 0; i < CB->bufferSize; i++) {
@@ -100,6 +179,14 @@ int freeBuffer() {
     }
     free(CB->jobBuffer);
     return 0;
+}
+
+void exitServer() {
+    freeBuffer();
+    free(CB->jobBuffer);
+    free(CB);
+    pthread_mutex_destroy(&CB->bufferMutex);
+    pthread_cond_destroy(&CB->bufferCond);
 }
 
 int addJob(char* job, struct CommanderBuffer* p, int socket) {
@@ -118,19 +205,28 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
         free(newJob);
         return -1;
     }
-    for (int i = 0; i < p->bufferSize; i++) {
-        if (p->jobBuffer[i].job == NULL) {
-            p->jobBuffer[i] = *newJob;
-            p->currentJobs++;
-            p->allJobs++;
-            char buffer[BUFSIZE];
-            sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
-            write(socket, buffer, strlen(buffer));
-            pthread_cond_signal(&p->bufferCond);
-            pthread_mutex_unlock(&p->bufferMutex);
-            return 0;
-        }
-    }
+    // for (int i = 0; i < p->bufferSize; i++) {
+    //     if (p->jobBuffer[i].job == NULL) {
+    //         p->jobBuffer[i] = *newJob;
+    //         p->currentJobs++;
+    //         p->allJobs++;
+    //         char buffer[BUFSIZE];
+    //         sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
+    //         write(socket, buffer, strlen(buffer));
+    //         pthread_cond_signal(&p->bufferCond);
+    //         pthread_mutex_unlock(&p->bufferMutex);
+    //         return 0;
+    //     }
+    // }
+
+    p->jobBuffer[p->currentJobs] = *newJob;
+    p->currentJobs++;
+    p->allJobs++;
+    char buffer[BUFSIZE];
+    sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
+    write(socket, buffer, strlen(buffer));
+    pthread_cond_signal(&p->bufferCond);
+
     pthread_mutex_unlock(&p->bufferMutex);
     return -1;
 }
@@ -152,7 +248,7 @@ void* workerThread(void* arg) {
         printf("Worker thread running\n");
 
         // Find a job to process
-        for (int i = 0; i < p->bufferSize; i++) {
+        for (int i = 0; i < p->bufferSize-1; i++) {
             if (p->jobBuffer[i].job != NULL) {
                 currentJob = &p->jobBuffer[i];
                 p->currentJobs--;
@@ -167,6 +263,8 @@ void* workerThread(void* arg) {
             printf("Worker thread processing job ID: %s\n", currentJob->jobID);
             printf("Worker thread processing job: %s\n", currentJob->job);
             char* job_command = strdup(currentJob->job);
+            char* jobID = strdup(currentJob->jobID);
+            int socket = currentJob->socket;
             pthread_mutex_lock(&p->bufferMutex);
             removeJob(p->jobBuffer, currentJob, p->bufferSize);
             pthread_mutex_unlock(&p->bufferMutex);
@@ -178,6 +276,21 @@ void* workerThread(void* arg) {
             } else if (pid == 0) {
                 // Child process executes the job
                 printf("Executing job: %s\n", job_command);
+
+                char outputFD[BUFSIZE];
+                sprintf(outputFD, "%d.output", getpid());
+                int fd = open(outputFD, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd == -1) {
+                    perror("open");
+                    exit(1);
+                }
+                if (dup2(fd, 1) == -1) {
+                    perror("dup2");
+                    exit(1);
+                }
+                close(fd);
+
+
                 char* argv[32];
                 int argc = 0;
                 char* token = strtok(job_command, " ");
@@ -186,20 +299,40 @@ void* workerThread(void* arg) {
                     token = strtok(NULL, " ");
                 }
                 argv[argc] = NULL;
-                execvp(argv[0], argv);
-                perror("execvp");
-                exit(1);
+                if (execvp(argv[0], argv) == -1) {
+                    write(socket, "Job execution failed\n", 21);
+                }
             }else{
-                int status;
-                waitpid(pid, &status, 0);
+                // Parent process
+                waitpid(pid, NULL, 0);
+
                 printf("Job done i guess\n");
+                printf("pid: %d\n", pid);
+                char outputFD[BUFSIZE];
+                sprintf(outputFD, "%d.output", pid);
+                int fd = open(outputFD, O_RDONLY);
+                if (fd == -1) {
+                    perror("open");
+                }
+                char buffer[BUFSIZE];
+                int bytes_read;
+                sprintf(buffer, "-----%s output start-----\n", jobID);
+                write(socket, buffer, strlen(buffer));
+                while ((bytes_read = read(fd, buffer, BUFSIZE)) > 0) {
+                    printf("bytes read: %d\n", bytes_read);
+                    write(socket, buffer, bytes_read);
+                }
+                sprintf(buffer, "-----%s output end-----\n", jobID);
+                write(socket, buffer, strlen(buffer));
+                
+                close(fd);
+                remove(outputFD);
+
                 pthread_mutex_lock(&p->bufferMutex);
                 activeWorkers--;
                 pthread_mutex_unlock(&p->bufferMutex);
-
-                free(currentJob->job);
-                free(currentJob->jobID);
-                close(currentJob->socket);
+                pthread_cond_signal(&p->bufferCond);
+                close(socket);
 
             }
             
@@ -228,11 +361,19 @@ void* controllerThread(void* arg) {
 
         if (strncmp(buf, "issueJob", 8) == 0) {
             char* job = buf + 9;
-            printf("Job: %s\n", job);
+            if (printBuffer(CB->jobBuffer, CB->bufferSize) == 0) {
+                printf("Buffer printed\n");
+            }
             addJob(job, CB, newsock);
+
         } else if (strncmp(buf, "setConcurrency", 14) == 0) {
             char* N = buf + 15;
             printf("N: %s\n", N);
+            int conc = atoi(N);
+            if (conc > threadPoolSize) {
+                write(newsock, "Invalid concurrency level\n", 27);
+                continue;
+            }
             setConcurrencyLevel(atoi(N));
             char buf[BUFSIZ];
             sprintf(buf, "CONCURRENCY SET AT %s\n", N);
@@ -245,17 +386,19 @@ void* controllerThread(void* arg) {
             } else {
                 write(newsock, "Job not found\n", 14);
             }
-
         } else if (strncmp(buf, "poll", 4) == 0) {
-            char* pollState = buf + 5;
-            printf("Poll State: %s\n", pollState);
+            pollState(newsock);
         } else if (strncmp(buf, "exit", 4) == 0) {
             pthread_mutex_lock(&CB->bufferMutex);
             while(CB->currentJobs > 0) {
+                printf("Current jobs: %d\n", CB->currentJobs);
                 pthread_cond_wait(&CB->bufferCond, &CB->bufferMutex);
             }
             pthread_mutex_unlock(&CB->bufferMutex);
-            freeBuffer(CB);
+            write(newsock, "SERVER TERMINATED", 18);
+
+            exitServer();
+            close(newsock);
             exit(0);
         }
 
@@ -280,7 +423,7 @@ int main(int argc, char** argv) {
 
     int portNum = atoi(argv[1]);
     int bufferSize = atoi(argv[2]);
-    int threadPoolSize = atoi(argv[3]);
+    threadPoolSize = atoi(argv[3]);
 
     CB = malloc(sizeof(struct CommanderBuffer));
     struct CommanderBuffer* Commanderbuffer = CB;
@@ -288,6 +431,10 @@ int main(int argc, char** argv) {
     Commanderbuffer->bufferSize = bufferSize;
     Commanderbuffer->currentJobs = 0;
     Commanderbuffer->allJobs = 0;
+    for (int i = 0; i < bufferSize; i++) {
+        Commanderbuffer->jobBuffer[i].job = NULL;
+        Commanderbuffer->jobBuffer[i].jobID = NULL;
+    }
     pthread_mutex_init(&Commanderbuffer->bufferMutex, NULL);
     pthread_cond_init(&Commanderbuffer->bufferCond, NULL);
 
@@ -314,6 +461,7 @@ int main(int argc, char** argv) {
         pthread_detach(thread);  // Detach worker threads as they run indefinitely
     }
 
+    int* arg = malloc(sizeof(int));
     while (1) {
         clientlen = sizeof(client);
         if ((newsock = accept(sock, clientptr, &clientlen)) < 0) {
@@ -329,15 +477,16 @@ int main(int argc, char** argv) {
         printf("Socket: %d\n", newsock);
 
         pthread_t controller;
-        int* arg = malloc(sizeof(int));
         *arg = newsock;
         pthread_create(&controller, NULL, controllerThread, arg);
         pthread_detach(controller);  // Detach controller thread
-        
+        // free(arg);
+
     }
+    free(arg);
 
     shutdown(sock, SHUT_RDWR);  // Shutdown the socket
-    free(Commanderbuffer->jobBuffer);  // Free the job buffer
-    free(Commanderbuffer);  // Free the CommanderBuffer structure
+    close(sock);  // Close the 
+    exitServer();
     return 0;
 }

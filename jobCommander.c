@@ -15,7 +15,6 @@ int main(int argc, char** argv){
     char* job = NULL;
     char* N = NULL;
     char* jobID = NULL;
-    char* pollState = NULL;
     int mode = 0;
 
 
@@ -53,12 +52,7 @@ int main(int argc, char** argv){
         mode = 3;
         jobID = argv[4];
     } else if (strcmp(argv[3], "poll") == 0) {
-        if ((argc < 5) || ((strcmp(argv[4],"running") != 0) && (strcmp(argv[4],"queued")!=0)))  {
-            printf("Usage: %s poll [running|queued]\n", argv[0]);
-            return 1;
-        } 
         mode = 4;
-        pollState = argv[4];
     } else if (strcmp(argv[3], "exit") == 0) {
         mode = 5;
     } else {
@@ -122,9 +116,7 @@ int main(int argc, char** argv){
             break;
         }
         case 4:{
-            char buf4[strlen("poll") + strlen(pollState) + 1];
-            sprintf(buf4, "poll %s", pollState);
-            write(sockfd, buf4, strlen("poll") + strlen(pollState) + 1);
+            write(sockfd, "poll", strlen("poll"));
             break;
         }
         case 5:{
@@ -134,18 +126,38 @@ int main(int argc, char** argv){
         default:
             break;
     }
+    if (mode == 1) {
+            while (1) {
+                char buffer[BUFSIZE];
+                int bytes_read = read(sockfd, buffer, BUFSIZE);
+                if (bytes_read < 0) {
+                    perror("read");
+                    return 1;
+                }
+                
+                buffer[bytes_read] = '\0';
+                printf("%s", buffer);
 
-    char response[BUFSIZE];
-    int n = read(sockfd, response, BUFSIZE);
-    if (n < 0) {
-        perror("read");
-        return 1;
-    }
+                if (strstr(buffer, "end") != NULL) { // job_%d output end contains "end" so i use that!
+                    break;
+                }
 
-    response[n] = '\0';
-    printf("Server response: %s", response);
+            }
+        } else {
+            char response[BUFSIZE];
+            int n = read(sockfd, response, BUFSIZE);
+            if (n < 0) {
+                perror("read");
+                return 1;
+            }
+            response[n] = '\0';
+            printf("Server response: %s\n", response);
+            
+
+        }
 
     close(sockfd);
+
 
     // Free allocated memory
     if (job != NULL) {
