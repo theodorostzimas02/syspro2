@@ -11,17 +11,25 @@
 
 #define BUFSIZE 1024
 
-void write_all(int socket, char* buf) {
-    int written = 0;
-    while (written < strlen(buf)) {
-        int n = write(socket, &buf[written], strlen(buf) - written);
+
+int sendJob(int sockfd, const char *job) {
+    char buf[strlen("issueJob") + strlen(job) + 2]; // +2 for space and null terminator
+    printf("job: %s\n", job);
+    sprintf(buf, "issueJob %s", job);
+    printf("strlen(buf): %ld\n", strlen(buf));
+    for (int i = 0; i < (int)strlen(buf); i ++) {
+        if (buf[i] == '@') {
+            break;
+        }
+        int n = write(sockfd, &buf[i], 1);
         if (n < 0) {
             perror("write");
-            exit(1);
+            return 1;
         }
-        written += n;
     }
-    return;
+
+    
+    return 0;
 }
 
 int main(int argc, char** argv){
@@ -59,6 +67,8 @@ int main(int argc, char** argv){
             strcat(jobCommand, argv[i]);
             strcat(jobCommand, " ");
         }
+        jobCommand = realloc(jobCommand, strlen(jobCommand) + 2);
+        jobCommand[strlen(jobCommand) - 1] = '@';
         mode = 1;
         job = strdup(jobCommand);
         free(jobCommand);
@@ -90,7 +100,8 @@ int main(int argc, char** argv){
     } else if (strcmp(argv[3], "exit") == 0) {
         mode = 5;
     } else {
-        printf("Invalid command: %s\n", argv[1]);
+        printf("Invalid command: %s\n", argv[3]);
+        printf("Please use one of the following commands: issueJob, setConcurrency, stop, poll, exit\n");
         return 1;
     }
 
@@ -132,9 +143,7 @@ int main(int argc, char** argv){
     
     switch (mode){
         case 1:{
-            char buf[strlen("issueJob") + strlen(job) + 1]; 
-            sprintf(buf, "issueJob %s", job);
-            write(sockfd, buf, strlen("issueJob") + strlen(job) + 1);
+            sendJob(sockfd, job);
             break;
         }
         case 2:{
@@ -161,34 +170,19 @@ int main(int argc, char** argv){
             break;
     }
     if (mode == 1) {
-            while (1) {
-                char buffer[BUFSIZE];
-                int bytes_read = read(sockfd, buffer, BUFSIZE);
-                if (bytes_read < 0) {
-                    perror("read");
-                    return 1;
-                }
-                
-                buffer[bytes_read] = '\0';
-                printf("%s", buffer);
-
-                if (strstr(buffer, "end") != NULL) { // job_%d output end contains "end" so i use that!
-                    break;
-                }
-
-            }
-        } else {
-            char response[BUFSIZE];
-            int n = read(sockfd, response, BUFSIZE);
-            if (n < 0) {
-                perror("read");
-                return 1;
-            }
-            response[n] = '\0';
-            printf("Server response: %s\n", response);
-            
-
+        //
+    } else {
+        char response[BUFSIZE];
+        int n = read(sockfd, response, BUFSIZE);
+        if (n < 0) {
+            perror("read");
+            return 1;
         }
+        response[n] = '\0';
+        printf("Server response: %s\n", response);
+        
+
+    }
 
     close(sockfd);
 

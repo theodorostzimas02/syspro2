@@ -14,6 +14,7 @@
 
 #define BUFSIZE 1024
 #define READ_CHUNK_SIZE 128
+#define BUILD_PATH "build"
 
 int concurrency = 1;
 int threadPoolSize = 1;
@@ -159,7 +160,7 @@ void pollState(int socket) {
 
     if (CB->currentJobs == 0) {
         write(socket, "No jobs in queue\n", 17);
-        pthread_mutex_unlock(&CB->bufferMutex)
+        pthread_mutex_unlock(&CB->bufferMutex);
         return;
     }
 
@@ -196,6 +197,8 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     newJob->socket = socket;
     sprintf(newJob->jobID, "job_%d", p->allJobs + 1);
 
+    
+
     pthread_mutex_lock(&p->bufferMutex);
     if (p->currentJobs == p->bufferSize) {
         pthread_mutex_unlock(&p->bufferMutex);
@@ -222,15 +225,18 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     p->jobBuffer[p->currentJobs] = *newJob;
     p->currentJobs++;
     p->allJobs++;
-    char buffer[BUFSIZE];
+
+    
+    char buffer[strlen(newJob->jobID)+ strlen(newJob->job) + 20];
+    printf("HERe\n");
     sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
     write(socket, buffer, strlen(buffer));
+    
     pthread_cond_signal(&p->bufferCond);
 
     pthread_mutex_unlock(&p->bufferMutex);
     return -1;
 }
-
 
 
 void* workerThread(void* arg) {
@@ -278,20 +284,21 @@ void* workerThread(void* arg) {
                 printf("Executing job: %s\n", job_command);
 
                 char outputFD[BUFSIZE];
-                sprintf(outputFD, "%d.output", getpid());
+                sprintf(outputFD, "%s/%d.output",BUILD_PATH, getpid());
                 int fd = open(outputFD, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                printf("Output file: %s\n", outputFD);
                 if (fd == -1) {
                     perror("open");
                     exit(1);
                 }
-                if (dup2(fd, 1) == -1) {
+                if (dup2(fd, 1) == -1) {   //stdout
                     perror("dup2");
                     exit(1);
                 }
                 close(fd);
 
 
-                char* argv[32];
+                char* argv[strlen(job_command) + 1];
                 int argc = 0;
                 char* token = strtok(job_command, " ");
                 while (token != NULL) {
@@ -299,6 +306,9 @@ void* workerThread(void* arg) {
                     token = strtok(NULL, " ");
                 }
                 argv[argc] = NULL;
+                for (int i = 0; i < argc; i++) {
+                    printf("Argv[%d]: %s\n", i, argv[i]);
+                }
                 if (execvp(argv[0], argv) == -1) {
                     write(socket, "Job execution failed\n", 21);
                 }
@@ -309,12 +319,13 @@ void* workerThread(void* arg) {
                 printf("Job done i guess\n");
                 printf("pid: %d\n", pid);
                 char outputFD[BUFSIZE];
-                sprintf(outputFD, "%d.output", pid);
+                sprintf(outputFD, "%s/%d.output",BUILD_PATH,pid);
                 int fd = open(outputFD, O_RDONLY);
                 if (fd == -1) {
+                    printf("Output file: %s\n", outputFD);
                     perror("open");
                 }
-                char buffer[BUFSIZE];
+                char buffer[strlen(job_command)+strlen(jobID)+20];
                 int bytes_read;
                 sprintf(buffer, "-----%s output start-----\n", jobID);
                 write(socket, buffer, strlen(buffer));
@@ -348,17 +359,43 @@ void* controllerThread(void* arg) {
     free(arg);
     printf("Socket: %d\n", newsock);
     while (1) {
-        char buf[BUFSIZE];
-        int n = read(newsock, buf, BUFSIZE);
-        if (n < 0) {
-            perror("read");
+        char* buf = malloc(sizeof(char) * 1);
+        if (buf == NULL) {
+            perror("malloc");
             exit(1);
         }
-        if (n == 0) {
-            break;
+
+        int total_chunks = 0;
+        
+        while (1) {
+            int n = read(newsock, buf + total_chunks, 1);
+            if (n < 0) {
+                perror("read");
+                exit(1);
+            }
+            if (n == 0) {
+                buf[total_chunks] = '\0';
+                break;
+            }
+           
+            total_chunks++;
+            buf = realloc(buf, total_chunks + 1);
+            if (buf == NULL) {
+                perror("realloc");
+                exit(1);
+            }
         }
-        buf[n] = '\0';
-        printf("Server received %d bytes: %s\n", n, buf);
+        
+        // int n = read(newsock, buf, total_chunks);
+        // if (n < 0) {
+        //     perror("read");
+        //     exit(1);
+        // }
+        // if (n == 0) {
+        //     break;
+        // }
+        buf[total_chunks] = '\0';
+        // printf("Server received %d bytes: %s\n", total_chunks, buf);
 
         if (strncmp(buf, "issueJob", 8) == 0) {
             char* job = buf + 9;
@@ -418,6 +455,14 @@ void* controllerThread(void* arg) {
 }
 
 int main(int argc, char** argv) {
+    char cwd[BUFSIZE];
+   if (getcwd(cwd, sizeof(cwd)) != NULL) {
+       printf("Current working dir: %s\n", cwd);
+   } else {
+       perror("getcwd() error");
+       return 1;
+   }
+
     int sock, newsock;
     struct sockaddr_in server, client;
     socklen_t clientlen;
