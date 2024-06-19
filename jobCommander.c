@@ -11,6 +11,19 @@
 
 #define BUFSIZE 1024
 
+void write_all(int socket, char* buf) {
+    int written = 0;
+    while (written < strlen(buf)) {
+        int n = write(socket, &buf[written], strlen(buf) - written);
+        if (n < 0) {
+            perror("write");
+            exit(1);
+        }
+        written += n;
+    }
+    return;
+}
+
 int main(int argc, char** argv){
     char* job = NULL;
     char* N = NULL;
@@ -29,14 +42,35 @@ int main(int argc, char** argv){
             return 1;
         }
         // Construct the entire command string
-        char jobCommand[BUFSIZE] = "";
-        for (int i = 4; i < argc; ++i) {
+        char* jobCommand = malloc(BUFSIZE);
+        if (jobCommand == NULL) {
+            perror("malloc");
+            return 1;
+        }
+        jobCommand[0] = '\0';
+
+         for (int i = 4; i < argc; ++i) {
+            // Calculate required size
+            size_t requiredSize = strlen(jobCommand) + strlen(argv[i]) + 2; // +1 for space, +1 for null terminator
+            if (requiredSize > BUFSIZE) {
+                // Reallocate with more space
+                jobCommand = realloc(jobCommand, requiredSize);
+            }
             strcat(jobCommand, argv[i]);
             strcat(jobCommand, " ");
         }
-
         mode = 1;
         job = strdup(jobCommand);
+        free(jobCommand);
+        
+        // char jobCommand[BUFSIZE] = "";
+        // for (int i = 4; i < argc; ++i) {
+        //     strcat(jobCommand, argv[i]);
+        //     strcat(jobCommand, " ");
+        // }
+
+        // mode = 1;
+        // job = strdup(jobCommand);
     } else if (strcmp(argv[3], "setConcurrency") == 0) {
         if (argc < 5) {
             printf("Usage: setConcurrency <N>\n");

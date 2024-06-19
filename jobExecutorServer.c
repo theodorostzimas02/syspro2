@@ -13,6 +13,7 @@
 #include <fcntl.h>
 
 #define BUFSIZE 1024
+#define READ_CHUNK_SIZE 128
 
 int concurrency = 1;
 int threadPoolSize = 1;
