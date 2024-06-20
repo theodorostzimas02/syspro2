@@ -12,8 +12,9 @@
 
 
 
+//Sending character by character the job to the server
 int sendJob(int sockfd, const char *job) {
-    char buf[strlen("issueJob") + strlen(job) + 2];
+    char buf[strlen("issueJob") + strlen(job) + 2]; // 2 for space and terminating character '@'
     sprintf(buf, "issueJob %s", job);
     for (int i = 0; i < (int)strlen(buf); i ++) {
         int n = write(sockfd, &buf[i], 1);
@@ -22,6 +23,8 @@ int sendJob(int sockfd, const char *job) {
             return 1;
         }
     }
+
+    // Send the terminating character ('@' in this case)
     int n = write(sockfd, "@", 1);
     if (n < 0) {
         perror("write");
@@ -34,9 +37,9 @@ int sendJob(int sockfd, const char *job) {
 
 int main(int argc, char** argv){
     char* job = NULL;
-    char* N = NULL;
-    char* jobID = NULL;
-    int mode = 0;
+    char* N = NULL;  //Concurrency
+    char* jobID = NULL; 
+    int mode = 0; // 1: issueJob, 2: setConcurrency, 3: stop, 4: poll, 5: exit
 
 
     if (argc < 4){
@@ -50,26 +53,32 @@ int main(int argc, char** argv){
             return 1;
         }
         
+        //First, allocate memory for the job command with BUFSIZE 
         char* jobCommand = malloc(BUFSIZE);
         if (jobCommand == NULL) {
             perror("malloc");
             return 1;
         }
-        jobCommand[0] = '\0';
 
-         for (int i = 4; i < argc; ++i) {
-            // Calculate required size
-            size_t requiredSize = strlen(jobCommand) + strlen(argv[i]) + 2; // +1 for space, +1 for null terminator
+        jobCommand[0] = '\0';
+        
+        //for every argument, we need to check if the required size is greater than BUFSIZE, if it is, we need to reallocate memory
+        for (int i = 4; i < argc; ++i) {
+            // Calculating required size
+            size_t requiredSize = strlen(jobCommand) + strlen(argv[i]) + 2;
             if (requiredSize > BUFSIZE) {
-                // Reallocate with more space
+                
                 jobCommand = realloc(jobCommand, requiredSize);
             }
             strcat(jobCommand, argv[i]);
             strcat(jobCommand, " ");
         }
         jobCommand = realloc(jobCommand, strlen(jobCommand) + 2);
+
+        // Add terminating character '@'
         jobCommand[strlen(jobCommand) - 1] = '@';
         mode = 1;
+        // Copy the job command to the job variable
         job = strdup(jobCommand);
         free(jobCommand);
         
@@ -80,6 +89,7 @@ int main(int argc, char** argv){
             return 1;
         }
         mode = 2;
+        // Copy the value of N to the N variable for concurrency
         N = argv[4];
     } else if (strcmp(argv[3], "stop") == 0) {
         if (argc < 5) {
@@ -104,6 +114,7 @@ int main(int argc, char** argv){
     struct hostent* mymachine;
     struct in_addr** addrlist;
 
+    // Get the IP address of the server
     if ((mymachine = gethostbyname(serverName)) == NULL){
         perror("gethostbyname");
         return 1;
@@ -162,12 +173,16 @@ int main(int argc, char** argv){
             break;
     }
     if (mode == 1) {
+
+        //We will eventually reallocate all of this. At first we allocate memory for 1 character
         char* commitBuf = malloc(sizeof(char) * 1);
         if (commitBuf == NULL) {
             perror("malloc");
             exit(1);
         }
 
+
+        //We will read the response character by character until we find the terminating character '@'
         int total_chunks = 0;
         while (1) {
             int n = read(sockfd, commitBuf + total_chunks, 1);
@@ -176,6 +191,7 @@ int main(int argc, char** argv){
                 exit(1);
             }
            
+           //If we find the terminating character '@', we will replace it with the null character
            if (commitBuf[total_chunks] == '@') {
                 commitBuf[total_chunks] = '\0';
                 break;
@@ -193,6 +209,7 @@ int main(int argc, char** argv){
         free(commitBuf);
         
 
+        //We do the exact same thing for the actual response of the job
         char* buf = malloc(sizeof(char) * 1);
         if (buf == NULL) {
             perror("malloc");
@@ -225,6 +242,7 @@ int main(int argc, char** argv){
         free(buf);
 
     } else {
+        // For any other command, we will read the response in a single read
         char response[BUFSIZE];
         int n = read(sockfd, response, BUFSIZE);
         if (n < 0) {
@@ -239,12 +257,11 @@ int main(int argc, char** argv){
 
     close(sockfd);
 
-
+    
     // Free allocated memory
     if (job != NULL) {
         free(job);
     }
     
-
     return 0;
 }
