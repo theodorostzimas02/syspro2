@@ -11,69 +11,15 @@
 #include <pthread.h>
 #include <signal.h>
 #include <fcntl.h>
+#include "../include/types.h"
 
-#define BUFSIZE 1024
-#define READ_CHUNK_SIZE 128
-#define BUILD_PATH "build"
 
 int concurrency = 1;
 int threadPoolSize = 1;
 int activeWorkers = 0;
 
-struct job {
-    char* job;
-    char* jobID;
-    int socket;
-
-};
-
-struct CommanderBuffer {
-    struct job* jobBuffer;
-    int bufferSize;
-    int currentJobs;
-    int allJobs;
-    pthread_mutex_t bufferMutex;
-    pthread_cond_t bufferCond;
-};
 
 struct CommanderBuffer* CB = NULL;
-
-int readFromServer(int sockfd, char* buf) {
-    int total_chunks = 0;
-    while (1) {
-        int n = read(sockfd, buf + total_chunks, 1);
-        if (n < 0) {
-            perror("read");
-            return 1;
-        }
-        if (buf[total_chunks] == '@') {
-            buf[total_chunks] = '\0';
-            break;
-        }
-        total_chunks++;
-        buf = realloc(buf, total_chunks + 1);
-        if (buf == NULL) {
-            perror("realloc");
-            return 1;
-        }
-    }
-    return 0;
-}
-
-int writeInServer(int sockfd, const char *job, char* buf) {
-    for (int i = 0; i < strlen(buf); i ++) {
-        int n = write(sockfd, &buf[i], 1);
-        if (n < 0) {
-            perror("write");
-            return 1;
-        }
-        if (buf[i] == '@') {
-            break;
-        }
-    }
-
-    return 0;
-}
 
 
 int printBuffer(struct job* jobBuffer, int bufferSize) {
@@ -147,41 +93,12 @@ int stopJob(char* jobID) {
     return 0;
 }
 
-
-
-
 void setConcurrencyLevel(int N) {
     pthread_mutex_lock(&CB->bufferMutex);
     concurrency = N;
     pthread_cond_broadcast(&CB->bufferCond);
     pthread_mutex_unlock(&CB->bufferMutex);
 }
-
-// void pollState(int socket) {
-//     int atLeastOneJob = 0;
-//     pthread_mutex_lock(&CB->bufferMutex);
-//     char response[4096]; 
-//     memset(response, 0, sizeof(response)); // Initialize response buffer
-
-//     for (int i = 0; i < CB->bufferSize; i++) {
-//         char doublet[BUFSIZE];
-//         if (CB->jobBuffer[i].job != NULL && CB->jobBuffer[i].socket == socket) {
-//             atLeastOneJob++;
-//             sprintf(doublet, "<%s,%s>\n", CB->jobBuffer[i].jobID, CB->jobBuffer[i].job);
-//             strcat(response, doublet);
-//         }
-//     }
-
-//     if (atLeastOneJob == 0 || CB->currentJobs == 0) {
-//         write(socket, "No jobs in queue\n", 17);
-//         pthread_mutex_unlock(&CB->bufferMutex);
-//         return;
-//     }
-
-//     write(socket, response, strlen(response));
-//     write(socket, "END", 3);
-//     pthread_mutex_unlock(&CB->bufferMutex);
-// }
 
 void pollState(int socket) {
     printf("Polling state\n");
@@ -246,20 +163,6 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
         free(newJob);
         return -1;
     }
-    // for (int i = 0; i < p->bufferSize; i++) {
-    //     if (p->jobBuffer[i].job == NULL) {
-    //         p->jobBuffer[i] = *newJob;
-    //         p->currentJobs++;
-    //         p->allJobs++;
-    //         char buffer[BUFSIZE];
-    //         sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
-    //         write(socket, buffer, strlen(buffer));
-    //         pthread_cond_signal(&p->bufferCond);
-    //         pthread_mutex_unlock(&p->bufferMutex);
-    //         return 0;
-    //     }
-    // }
-
 
     p->jobBuffer[p->currentJobs] = *newJob;
     p->currentJobs++;
@@ -269,7 +172,6 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     char buffer[strlen(newJob->jobID)+ strlen(newJob->job) + 20];
     printf("HERe\n");
     sprintf(buffer, "Job <%s,%s> SUBMITTED@\n", newJob->jobID,newJob->job);
-    // writeInServer(socket, newJob->job, buffer);
     write(socket, buffer, strlen(buffer));
     
     pthread_cond_signal(&p->bufferCond);

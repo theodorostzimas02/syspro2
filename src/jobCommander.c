@@ -8,14 +8,13 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include "../include/types.h"
 
-#define BUFSIZE 1024
 
 
 int sendJob(int sockfd, const char *job) {
-    char buf[strlen("issueJob") + strlen(job) + 2]; // +2 for space and null terminator
+    char buf[strlen("issueJob") + strlen(job) + 2];
     sprintf(buf, "issueJob %s", job);
-    printf("strlen(buf): %ld\n", strlen(buf));
     for (int i = 0; i < (int)strlen(buf); i ++) {
         int n = write(sockfd, &buf[i], 1);
         if (n < 0) {
@@ -31,30 +30,7 @@ int sendJob(int sockfd, const char *job) {
     return 0;
 }
 
-int readFromServer(int sockfd, char* buf) {
-    int total_chunks = 0;
-    while (1) {
-        int n = read(sockfd, buf + total_chunks, 1);
-        if (n < 0) {
-            perror("read");
-            return 1;
-        }
-        if (buf[total_chunks] == '@') {
-            buf[total_chunks] = '\0';
-            break;
-        }
-        total_chunks++;
-        buf = realloc(buf, total_chunks + 1);
-        if (buf == NULL) {
-            perror("realloc");
-            return 1;
-        }
-        printf("buf: %s\n", buf);
-    }
 
-    printf ("buf: %s\n", buf);
-    return 0;
-}
 
 int main(int argc, char** argv){
     char* job = NULL;
@@ -73,7 +49,7 @@ int main(int argc, char** argv){
             printf("Usage: issueJob <job>\n");
             return 1;
         }
-        // Construct the entire command string
+        
         char* jobCommand = malloc(BUFSIZE);
         if (jobCommand == NULL) {
             perror("malloc");
@@ -97,14 +73,7 @@ int main(int argc, char** argv){
         job = strdup(jobCommand);
         free(jobCommand);
         
-        // char jobCommand[BUFSIZE] = "";
-        // for (int i = 4; i < argc; ++i) {
-        //     strcat(jobCommand, argv[i]);
-        //     strcat(jobCommand, " ");
-        // }
 
-        // mode = 1;
-        // job = strdup(jobCommand);
     } else if (strcmp(argv[3], "setConcurrency") == 0) {
         if (argc < 5) {
             printf("Usage: setConcurrency <N>\n");
@@ -139,8 +108,7 @@ int main(int argc, char** argv){
         perror("gethostbyname");
         return 1;
     }else {
-        printf ("Name To Be Resolved : %s \n", mymachine->h_name); 
-        printf ("Name Length in Bytes : %d \n", mymachine->h_length);
+        printf ("Connecting to  : %s \n", mymachine->h_name); 
         addrlist = ( struct in_addr **) mymachine->h_addr_list ;
         for (int i = 0; addrlist[i] != NULL ; i ++) {
             strcpy(symbolicip, inet_ntoa(*addrlist[i]));
@@ -221,7 +189,7 @@ int main(int argc, char** argv){
             }
         }
 
-        printf("Server response: %s\n", commitBuf);
+        printf("%s\n", commitBuf);
         free(commitBuf);
         
 
@@ -252,7 +220,8 @@ int main(int argc, char** argv){
             }
         }
 
-        printf("Server response: %s\n", buf);
+        printf("Response for command: %s\n", argv[3]);
+        printf("%s\n", buf);
         free(buf);
 
     } else {
@@ -263,7 +232,8 @@ int main(int argc, char** argv){
             return 1;
         }
         response[n] = '\0';
-        printf("Server response: %s\n", response);
+        printf("Response for command: %s\n", argv[3]);
+        printf("%s\n", response);
         
     }
 
