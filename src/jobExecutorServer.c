@@ -38,9 +38,42 @@ struct CommanderBuffer {
 
 struct CommanderBuffer* CB = NULL;
 
+int readFromServer(int sockfd, char* buf) {
+    int total_chunks = 0;
+    while (1) {
+        int n = read(sockfd, buf + total_chunks, 1);
+        if (n < 0) {
+            perror("read");
+            return 1;
+        }
+        if (buf[total_chunks] == '@') {
+            buf[total_chunks] = '\0';
+            break;
+        }
+        total_chunks++;
+        buf = realloc(buf, total_chunks + 1);
+        if (buf == NULL) {
+            perror("realloc");
+            return 1;
+        }
+    }
+    return 0;
+}
 
+int writeInServer(int sockfd, const char *job, char* buf) {
+    for (int i = 0; i < strlen(buf); i ++) {
+        int n = write(sockfd, &buf[i], 1);
+        if (n < 0) {
+            perror("write");
+            return 1;
+        }
+        if (buf[i] == '@') {
+            break;
+        }
+    }
 
-
+    return 0;
+}
 
 
 int printBuffer(struct job* jobBuffer, int bufferSize) {
@@ -80,9 +113,11 @@ struct job* getJob(struct job* jobBuffer, int bufferSize) {
     return NULL;
 }
 
-int searchJob(struct job* jobBuffer, char* jobID, int bufferSize) {
+int searchJob(char* jobID, int bufferSize) {
     for (int i = 0; i < bufferSize; i++) {
-        if (jobBuffer[i].jobID != NULL && strcmp(jobBuffer[i].jobID, jobID) == 0) {
+        printf("Comparing %s with %s\n", CB->jobBuffer[i].jobID, jobID);
+
+        if (CB->jobBuffer[i].jobID != NULL && strstr(CB->jobBuffer[i].jobID, jobID) == 0) {
             return i;
         }
     }
@@ -90,19 +125,22 @@ int searchJob(struct job* jobBuffer, char* jobID, int bufferSize) {
 }
 
 int stopJob(char* jobID) {
-    int index = searchJob(CB->jobBuffer, jobID, CB->bufferSize);
+    printf("Stopping job\n");
+    pthread_mutex_lock(&CB->bufferMutex);
+    int index = searchJob(jobID, CB->bufferSize);
     if (index == -1) {
-        printf("Job not found frrrr\n");
+        printf("Job not found\n");
+        pthread_mutex_unlock(&CB->bufferMutex);
         return -1;
     }
     struct job* job = &CB->jobBuffer[index];
     if (job->job == NULL) {
+        pthread_mutex_unlock(&CB->bufferMutex);
         return -1;
     }
-    write(job->socket, "Job terminated\n", 15);
-    write(job->socket, "END", 3);
+    printf("Job found\n");
+    write(job->socket, "Job stopped\n", 12);
     removeJob(CB->jobBuffer, job, CB->bufferSize);
-    pthread_mutex_lock(&CB->bufferMutex);
     CB->currentJobs--;
     pthread_mutex_unlock(&CB->bufferMutex);
     printf("Job stopped for gooooood\n");
@@ -146,6 +184,7 @@ void setConcurrencyLevel(int N) {
 // }
 
 void pollState(int socket) {
+    printf("Polling state\n");
     pthread_mutex_lock(&CB->bufferMutex);
     char response[4096]; 
     memset(response, 0, sizeof(response)); // Initialize response buffer
@@ -165,7 +204,6 @@ void pollState(int socket) {
     }
 
     write(socket, response, strlen(response));
-    write(socket, "END", 3);
     pthread_mutex_unlock(&CB->bufferMutex);
 }
 
@@ -202,7 +240,7 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     pthread_mutex_lock(&p->bufferMutex);
     if (p->currentJobs == p->bufferSize) {
         pthread_mutex_unlock(&p->bufferMutex);
-        write(socket, "Server is busy, please try again later\n", 40);
+        write(socket, "Server is busy, please try again later@\n", 40);
         free(newJob->jobID);
         free(newJob->job);
         free(newJob);
@@ -222,6 +260,7 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     //     }
     // }
 
+
     p->jobBuffer[p->currentJobs] = *newJob;
     p->currentJobs++;
     p->allJobs++;
@@ -229,7 +268,8 @@ int addJob(char* job, struct CommanderBuffer* p, int socket) {
     
     char buffer[strlen(newJob->jobID)+ strlen(newJob->job) + 20];
     printf("HERe\n");
-    sprintf(buffer, "Job <%s,%s> SUBMITTED\n", newJob->jobID,newJob->job);
+    sprintf(buffer, "Job <%s,%s> SUBMITTED@\n", newJob->jobID,newJob->job);
+    // writeInServer(socket, newJob->job, buffer);
     write(socket, buffer, strlen(buffer));
     
     pthread_cond_signal(&p->bufferCond);
@@ -306,9 +346,6 @@ void* workerThread(void* arg) {
                     token = strtok(NULL, " ");
                 }
                 argv[argc] = NULL;
-                for (int i = 0; i < argc; i++) {
-                    printf("Argv[%d]: %s\n", i, argv[i]);
-                }
                 if (execvp(argv[0], argv) == -1) {
                     write(socket, "Job execution failed\n", 21);
                 }
@@ -327,14 +364,16 @@ void* workerThread(void* arg) {
                 }
                 char buffer[strlen(job_command)+strlen(jobID)+20];
                 int bytes_read;
+                printf("Start of job\n");
                 sprintf(buffer, "-----%s output start-----\n", jobID);
                 write(socket, buffer, strlen(buffer));
-                while ((bytes_read = read(fd, buffer, BUFSIZE)) > 0) {
-                    printf("bytes read: %d\n", bytes_read);
-                    write(socket, buffer, bytes_read);
+                while ((bytes_read = read(fd, buffer, 1)) > 0) {
+                    write(socket, buffer, 1);
                 }
                 sprintf(buffer, "-----%s output end-----\n", jobID);
+                printf("End of job\n");
                 write(socket, buffer, strlen(buffer));
+                write(socket, "@", 1);
                 shutdown(socket, SHUT_RDWR);
 
                 close(fd);
@@ -369,22 +408,23 @@ void* controllerThread(void* arg) {
         
         while (1) {
             int n = read(newsock, buf + total_chunks, 1);
-            if (n < 0) {
-                perror("read");
-                exit(1);
-            }
-            if (n == 0) {
-                buf[total_chunks] = '\0';
-                break;
-            }
-           
+           if (n == 0) {
+               break;
+           }
+
             total_chunks++;
             buf = realloc(buf, total_chunks + 1);
             if (buf == NULL) {
                 perror("realloc");
                 exit(1);
             }
+
+            if (buf[total_chunks - 1] == '@') {
+                buf[total_chunks - 1] = ' ';
+                break;
+            }
         }
+    
         
         // int n = read(newsock, buf, total_chunks);
         // if (n < 0) {
@@ -403,6 +443,7 @@ void* controllerThread(void* arg) {
                 printf("Buffer printed\n");
             }
             addJob(job, CB, newsock);
+            break;
 
         } else if (strncmp(buf, "setConcurrency", 14) == 0) {
             char* N = buf + 15;
@@ -420,21 +461,23 @@ void* controllerThread(void* arg) {
             write(newsock, buf, strlen(buf));
             shutdown(newsock, SHUT_RDWR);
             close(newsock);
+            break;
         } else if (strncmp(buf, "stop", 4) == 0) {
             char* jobID = buf + 5;
             printf("Job ID: %s\n", jobID);
-            if (stopJob(jobID) == 0) {
-                write(newsock, "Job stopped\n", 12);
-            } else {
+            if (stopJob(jobID) == -1) {
                 write(newsock, "Job not found\n", 14);
+            } else {
+                write(newsock, "Job stopped\n", 12);
             }
-            shutdown(newsock, SHUT_RDWR);
             close(newsock);
+            break;
         } else if (strncmp(buf, "poll", 4) == 0) {
             pollState(newsock);
-            shutdown(newsock, SHUT_RDWR);
             close(newsock);
+            break;
         } else if (strncmp(buf, "exit", 4) == 0) {
+            printf("Server terminating\n");
             pthread_mutex_lock(&CB->bufferMutex);
             while(CB->currentJobs > 0) {
                 printf("Current jobs: %d\n", CB->currentJobs);
@@ -443,7 +486,13 @@ void* controllerThread(void* arg) {
             pthread_mutex_unlock(&CB->bufferMutex);
             write(newsock, "SERVER TERMINATED", 18);
 
-            exitServer();
+            for (int i = 0; i < CB->bufferSize; i++) {
+                if (CB->jobBuffer[i].job != NULL) {
+                    write(CB->jobBuffer[i].socket, "SERVER TERMINATED BEFORE EXECUTION\n", 36);
+                }
+            }
+
+            // exitServer();
             close(newsock);
             exit(0);
         }
@@ -533,7 +582,7 @@ int main(int argc, char** argv) {
         pthread_t controller;
         *arg = newsock;
         pthread_create(&controller, NULL, controllerThread, arg);
-        pthread_detach(controller);  // Detach controller thread
+        pthread_join(controller, NULL);
         // free(arg);
 
     }

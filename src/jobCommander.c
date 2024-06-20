@@ -14,21 +14,45 @@
 
 int sendJob(int sockfd, const char *job) {
     char buf[strlen("issueJob") + strlen(job) + 2]; // +2 for space and null terminator
-    printf("job: %s\n", job);
     sprintf(buf, "issueJob %s", job);
     printf("strlen(buf): %ld\n", strlen(buf));
     for (int i = 0; i < (int)strlen(buf); i ++) {
-        if (buf[i] == '@') {
-            break;
-        }
         int n = write(sockfd, &buf[i], 1);
         if (n < 0) {
             perror("write");
             return 1;
         }
     }
+    int n = write(sockfd, "@", 1);
+    if (n < 0) {
+        perror("write");
+        return 1;
+    }    
+    return 0;
+}
 
-    
+int readFromServer(int sockfd, char* buf) {
+    int total_chunks = 0;
+    while (1) {
+        int n = read(sockfd, buf + total_chunks, 1);
+        if (n < 0) {
+            perror("read");
+            return 1;
+        }
+        if (buf[total_chunks] == '@') {
+            buf[total_chunks] = '\0';
+            break;
+        }
+        total_chunks++;
+        buf = realloc(buf, total_chunks + 1);
+        if (buf == NULL) {
+            perror("realloc");
+            return 1;
+        }
+        printf("buf: %s\n", buf);
+    }
+
+    printf ("buf: %s\n", buf);
     return 0;
 }
 
@@ -148,29 +172,89 @@ int main(int argc, char** argv){
         }
         case 2:{
             char buf2[strlen("setConcurrency") + strlen(N) + 1];
-            sprintf(buf2, "setConcurrency %s", N);
-            write(sockfd, buf2, strlen("setConcurrency") + strlen(N) + 1);
+            sprintf(buf2, "setConcurrency %s@", N);
+            write(sockfd, buf2, strlen("setConcurrency") + strlen(N) + 2);
             break;
         }
         case 3:{
-            char buf3[strlen("stop") + strlen(jobID) + 1];
-            sprintf(buf3, "stop %s", jobID);
-            write(sockfd, buf3, strlen("stop") + strlen(jobID) + 1);
+            char buf3[strlen("stop") + strlen(jobID) + 3];
+            sprintf(buf3, "stop %s@", jobID);
+            write(sockfd, buf3, strlen("stop") + strlen(jobID) + 3);
             break;
         }
         case 4:{
-            write(sockfd, "poll", strlen("poll"));
+            write(sockfd, "poll@", strlen("poll@"));
             break;
         }
         case 5:{
-            write(sockfd, "exit", strlen("exit"));
+            write(sockfd, "exit@", strlen("exit@"));
             break;
         }
         default:
             break;
     }
     if (mode == 1) {
-        //
+        char* commitBuf = malloc(sizeof(char) * 1);
+        if (commitBuf == NULL) {
+            perror("malloc");
+            exit(1);
+        }
+
+        int total_chunks = 0;
+        while (1) {
+            int n = read(sockfd, commitBuf + total_chunks, 1);
+            if (n < 0) {
+                perror("read");
+                exit(1);
+            }
+           
+           if (commitBuf[total_chunks] == '@') {
+                commitBuf[total_chunks] = '\0';
+                break;
+            }
+           
+            total_chunks++;
+            commitBuf = realloc(commitBuf, total_chunks + 1);
+            if (commitBuf == NULL) {
+                perror("realloc");
+                exit(1);
+            }
+        }
+
+        printf("Server response: %s\n", commitBuf);
+        free(commitBuf);
+        
+
+        char* buf = malloc(sizeof(char) * 1);
+        if (buf == NULL) {
+            perror("malloc");
+            exit(1);
+        }
+
+        total_chunks = 0;
+        while (1) {
+            int n = read(sockfd, buf + total_chunks, 1);
+            if (n < 0) {
+                perror("read");
+                exit(1);
+            }
+           
+           if (buf[total_chunks] == '@') {
+                buf[total_chunks] = '\0';
+                break;
+            }
+           
+            total_chunks++;
+            buf = realloc(buf, total_chunks + 1);
+            if (buf == NULL) {
+                perror("realloc");
+                exit(1);
+            }
+        }
+
+        printf("Server response: %s\n", buf);
+        free(buf);
+
     } else {
         char response[BUFSIZE];
         int n = read(sockfd, response, BUFSIZE);
@@ -181,7 +265,6 @@ int main(int argc, char** argv){
         response[n] = '\0';
         printf("Server response: %s\n", response);
         
-
     }
 
     close(sockfd);
